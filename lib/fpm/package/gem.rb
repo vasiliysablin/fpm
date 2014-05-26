@@ -43,6 +43,9 @@ class FPM::Package::Gem < FPM::Package
     :multivalued => true, :attribute_name => :gem_disable_dependencies
 
   option "--version-bins", :flag, "Append the version to the bins", :default => false
+  option "--version-name", :flag, "Append the version to the package name", :default => false, :attribute_name => :gem_version_name
+  option "--version-name-dependencies", :flag, "Append the version to dependencies package names", :default => false, :attribute_name => :gem_version_name_dependencies
+  option "--dependencies-dir", "DEPENDENCIES_DIR", "Directory with dependencies", :attribute_name => :gem_dependencies_dir
 
   def input(gem)
     # 'arg'  is the name of the rubygem we should unpack.
@@ -103,8 +106,13 @@ class FPM::Package::Gem < FPM::Package
     # name prefixing is optional, if enabled, a name 'foo' will become
     # 'rubygem-foo' (depending on what the gem_package_name_prefix is)
     self.name = spec.name
+
+    if attributes[:gem_version_name?] 
+      self.name = add_version_name(self.name, spec.version.to_s)
+    end
+
     if attributes[:gem_fix_name?]
-      self.name = fix_name(spec.name)
+      self.name = fix_name(self.name)
     end
 
     #self.name = [attributes[:gem_package_name_prefix], spec.name].join("-")
@@ -142,6 +150,11 @@ class FPM::Package::Gem < FPM::Package
     self.provides << "#{self.name} = #{self.version}"
 
     if !attributes[:no_auto_depends?]
+      if attributes[:gem_version_name_dependencies?]
+        path = attributes[:dependencies_dir] || File.dirname(gem_path)
+        available_gems = ::Dir[File.join(path, '*.gem')].map { |f| File.basename(f) }
+      end
+
       spec.runtime_dependencies.map do |dep|
         # rubygems 1.3.5 doesn't have 'Gem::Dependency#requirement'
         if dep.respond_to?(:requirement)
@@ -152,15 +165,23 @@ class FPM::Package::Gem < FPM::Package
 
         # Some reqs can be ">= a, < b" versions, let's handle that.
         reqs.to_s.split(/, */).each do |req|
+
           if attributes[:gem_disable_dependencies]
             next if attributes[:gem_disable_dependencies].include?(dep.name)
           end
 
-          if attributes[:gem_fix_dependencies?]
-            name = fix_name(dep.name)
-          else
-            name = dep.name
+          name = dep.name
+
+          if attributes[:gem_version_name_dependencies?]
+            gemfile = available_gems.select{|f| f =~ /^#{name}\-((\d+)\.?)+\.gem/ }.first
+            version = gemfile ? gemfile.scan(/^#{name}\-((?:\d+\.?)+)\.gem$/)[0][0] : ''
+            name = add_version_name(name, version)
           end
+
+          if attributes[:gem_fix_dependencies?]
+            name = fix_name(name)
+          end
+
           self.dependencies << "#{name} #{req}"
         end
       end # runtime_dependencies
@@ -220,5 +241,10 @@ class FPM::Package::Gem < FPM::Package
   def fix_name(name)
     return [attributes[:gem_package_name_prefix], name].join("-")
   end # def fix_name
+
+  def add_version_name(name, version)
+    version && !version.empty? ? [name, version].join("-") : name
+  end # def add_version_name
+
   public(:input, :output)
 end # class FPM::Package::Gem
